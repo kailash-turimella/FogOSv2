@@ -20,3 +20,12 @@
 #define SYS_link   19
 #define SYS_mkdir  20
 #define SYS_close  21
+#define SYS_shutdown 22
+#define SYS_reboot 23
+#define SYS_clock 24
+#define SYS_strace_on 25
+#define SYS_wait2 26
+#define SYS_nice 27
+#define SYS_getcwd 28
+#define SYS_freemem 29
+#define SYS_mmap 30

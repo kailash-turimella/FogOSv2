@@ -407,6 +407,34 @@ sys_mknod(void)
 }
 
 uint64
+sys_getcwd(void)
+{
+  uint64 ubuf;
+  int sz;
+
+  begin_op();
+  argaddr(0, &ubuf);
+  argint(1, &sz);
+
+  if (sz > PGSIZE) {
+    end_op();
+    return -1;
+  }
+
+  char *buf = kalloc();
+  getcwd(buf, sz);
+
+  if (copyout(myproc()->pagetable, ubuf, buf, sz) < 0) {
+    end_op();
+    return -1;
+  }
+
+  kfree(buf);
+  end_op();
+  return 0;
+}
+
+uint64
 sys_chdir(void)
 {
   char path[MAXPATH];

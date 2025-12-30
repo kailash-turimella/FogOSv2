@@ -83,10 +83,13 @@ endif
 
 LDFLAGS = -z max-page-size=4096
 
-$K/kernel: $(OBJS) $K/kernel.ld
+$K/kernel: $(OBJS) $K/kernel.ld $K/strace.h
 	$(LD) $(LDFLAGS) -T $K/kernel.ld -o $K/kernel $(OBJS) 
 	$(OBJDUMP) -S $K/kernel > $K/kernel.asm
 	$(OBJDUMP) -t $K/kernel | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $K/kernel.sym
+
+$K/strace.h: generate-traces.sh $U/user.h
+		./generate-traces.sh > $K/strace.h
 
 $K/%.o: $K/%.S
 	$(CC) -g -c -o $@ $<
@@ -110,7 +113,7 @@ $U/usys.o : $U/usys.S
 $U/_forktest: $U/forktest.o $(ULIB)
 	# forktest has less library code linked in - needs to be small
 	# in order to be able to max out the proc table.
-	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o $U/_forktest $U/forktest.o $U/ulib.o $U/usys.o
+	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o $U/_forktest $U/forktest.o $U/ulib.o $U/usys.o $U/umalloc.o $U/printf.o
 	$(OBJDUMP) -S $U/_forktest > $U/forktest.asm
 
 mkfs/mkfs: mkfs/mkfs.c $K/fs.h $K/param.h
@@ -123,20 +126,43 @@ mkfs/mkfs: mkfs/mkfs.c $K/fs.h $K/param.h
 .PRECIOUS: %.o
 
 UPROGS=\
+	$U/_about\
+	$U/_barca\
+	$U/_benchmark\
+	$U/_broken\
 	$U/_cat\
+	$U/_catlines\
 	$U/_compress\
 	$U/_compress_test\
+	$U/_clear\
+	$U/_clock\
 	$U/_echo\
+	$U/_fnr\
 	$U/_forktest\
+	$U/_freemem\
 	$U/_grep\
 	$U/_init\
 	$U/_kill\
+	$U/_leetify\
 	$U/_ln\
 	$U/_ls\
 	$U/_mkdir\
+	$U/_mmap\
+	$U/_mmaptest\
+	$U/_mt70\
+	$U/_mt80\
+	$U/_mt90\
+	$U/_nice\
+	$U/_opt_cat\
+	$U/_pwd\
 	$U/_rm\
+	$U/_reboot\
 	$U/_sh\
+	$U/_shutdown\
+	$U/_spinner\
+	$U/_strace\
 	$U/_stressfs\
+	$U/_tolower\
 	$U/_usertests\
 	$U/_grind\
 	$U/_wc\
@@ -145,8 +171,8 @@ UPROGS=\
 	$U/_forphan\
 	$U/_dorphan\
 
-fs.img: mkfs/mkfs README.md $(UPROGS)
-	mkfs/mkfs fs.img README.md $(UPROGS)
+fs.img: mkfs/mkfs README.md tm.txt input.txt $(UPROGS) script.sh spin1.sh spin2.sh 1.sh 2.sh 
+	mkfs/mkfs fs.img README.md tm.txt input.txt $(UPROGS) script.sh spin1.sh spin2.sh 1.sh 2.sh
 
 -include kernel/*.d user/*.d
 

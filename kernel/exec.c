@@ -44,6 +44,37 @@ kexec(char *path, char **argv)
   }
   ilock(ip);
 
+  // check for shebang (#!)
+  char shebang[2];
+  if(readi(ip, 0, (uint64)shebang, 0, 2) == 2 && shebang[0] == '#' && shebang[1] == '!') {
+  	// now read the interpreter
+  	char interpreter[MAXPATH];
+  	int n = readi(ip, 0, (uint64)interpreter, 2, MAXPATH);
+  	if (n <= 0)
+  		goto bad;
+
+  	// find \n and remove it from the interpreter
+  	for (i = 0; i < n; i++) {
+  		if(interpreter[i] == '\n') {
+  			interpreter[i] = '\0';
+  			break;
+  		}
+  	}
+
+  	// build new argv array to pass to kexec
+  	char *new_argv[MAXARG];
+  	new_argv[0] = interpreter;
+  	new_argv[1] = path;
+  	for (i = 1; argv[1] && i < MAXARG - 2; i++)
+  		new_argv[i + 1] = argv[i];
+  	new_argv[i + 1] = 0;
+
+  	// unlock and end any file system log operations
+  	iunlockput(ip);
+  	end_op();
+  	return kexec(interpreter, new_argv);
+  }
+
   // Read the ELF header.
   if(readi(ip, 0, (uint64)&elf, 0, sizeof(elf)) != sizeof(elf))
     goto bad;
@@ -133,6 +164,10 @@ kexec(char *path, char **argv)
   p->sz = sz;
   p->trapframe->epc = elf.entry;  // initial program counter = main
   p->trapframe->sp = sp; // initial stack pointer
+
+  p->mmap = TRAPFRAME - (USERSTACK * PGSIZE);
+  p->mmap_pages = 0;
+  
   proc_freepagetable(oldpagetable, oldsz);
 
   return argc; // this ends up in a0, the first argument to main(argc, argv)

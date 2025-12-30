@@ -718,3 +718,96 @@ nameiparent(char *path, char *name)
 {
   return namex(path, 1, name);
 }
+
+// Get the name of a particular inode in a directory.
+int
+diriname(struct inode *dp, ushort inum, char name[DIRSIZ], ushort *iparent)
+{
+  ilock(dp);
+
+  if (dp->type != T_DIR)
+    panic("diriname not DIR");
+
+  struct dirent de;
+  if (iparent) {
+    // Read second entry ('..', aka parent)
+    readi(dp, 0, (uint64) &de, sizeof(struct dirent), sizeof(struct dirent));
+    *iparent = de.inum;
+  }
+
+  for (uint off = 0; off < dp->size; off += sizeof(de)){
+    if (readi(dp, 0, (uint64) &de, off, sizeof(de)) != sizeof(de))
+      panic("diriname read");
+    if (de.inum == 0)
+      continue;
+    if (de.inum == inum && name) {
+      // Found the inode
+      strncpy(name, de.name, DIRSIZ);
+      iunlockput(dp);
+      return strlen(name);
+    }
+  }
+
+  iunlockput(dp);
+  return -1;
+}
+
+int
+getcwd(char *buf, uint size)
+{
+  struct inode *ip = myproc()->cwd;
+  ilock(ip);
+
+  if(ip->type != T_DIR)
+    panic("getcwd not DIR");
+
+  if (!buf || size <= 1) {
+    iunlock(ip);
+    return -1;
+  }
+
+  if (ip->inum == 1 && size > 1) {
+    buf[0] = '/';
+    buf[1] = '\0';
+    iunlock(ip);
+    return 0;
+  }
+
+  // We copy the path to the *end* of the buffer instead of the beginning, then
+  // work backwards. Start by null terminating the string.
+  buf[size - 1] = '\0';
+  uint bufp = size - 2;
+
+  struct inode *i = iget(ip->dev, ip->inum);
+
+  ushort iparent;
+  ushort last_parent = ip->inum;
+  ushort icurrent = ip->inum;
+  char name[DIRSIZ];
+  iunlock(ip);
+
+  // Starting with the CWD inode, go up one level (..), read that directory, and
+  // search for the CWD inode in it. Repeat the process until we reach /.
+  while (icurrent != 1 && diriname(i, icurrent, name, &iparent) != -1) {
+    if (icurrent != last_parent) {
+      // We found another path element. Add it to the string.
+      int len = strlen(name);
+      if (len < bufp) {
+        bufp -= len;
+        memmove(buf + bufp, name, len);
+        buf[--bufp] = '/';
+      } else {
+        // No more space to store the path.
+        break;
+      }
+    }
+    i = iget(ip->dev, iparent);
+    icurrent = last_parent;
+    last_parent = iparent;
+  }
+
+  // If we didn't use the entire buffer, slide the string over to the beginning.
+  memmove(buf, buf + bufp, size - bufp);
+
+  return 0;
+}

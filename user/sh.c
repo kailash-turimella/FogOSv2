@@ -77,6 +77,14 @@ runcmd(struct cmd *cmd)
     if(ecmd->argv[0] == 0)
       exit(1);
     exec(ecmd->argv[0], ecmd->argv);
+
+	if (strchr(ecmd->argv[0], '/') == 0) {
+		char buf[128];
+		buf[0] = '/';
+		strcpy(buf+1, ecmd->argv[0]);
+		exec(buf, ecmd->argv);
+	}
+    
     fprintf(2, "exec %s failed\n", ecmd->argv[0]);
     break;
 
@@ -132,9 +140,12 @@ runcmd(struct cmd *cmd)
 }
 
 int
-getcmd(char *buf, int nbuf)
+getcmd(char *buf, int nbuf, int is_script)
 {
-  write(2, "$ ", 2);
+  if (!is_script) {
+  	write(2, "$ ", 2);
+  }
+  
   memset(buf, 0, nbuf);
   gets(buf, nbuf);
   if(buf[0] == 0) // EOF
@@ -143,10 +154,11 @@ getcmd(char *buf, int nbuf)
 }
 
 int
-main(void)
+main(int argc, char *argv[])
 {
   static char buf[100];
   int fd;
+  int is_script = 0; // flag to check if we are running a script
 
   // Ensure that three file descriptors are open.
   while((fd = open("console", O_RDWR)) >= 0){
@@ -156,12 +168,22 @@ main(void)
     }
   }
 
+  if (argc > 1) {
+  	is_script = 1;
+  	close(0); // we close stdin
+  	if (open(argv[1], O_RDONLY) < 0) {
+  		fprintf(2, "sh: cannot open %s\n", argv[1]);
+  		exit(1);
+  	}
+  }
+
+
   // Read and run input commands.
-  while(getcmd(buf, sizeof(buf)) >= 0){
+  while(getcmd(buf, sizeof(buf), is_script) >= 0){
     char *cmd = buf;
     while (*cmd == ' ' || *cmd == '\t')
-      cmd++;
-    if (*cmd == '\n') // is a blank command
+      cmd++;	
+    if (*cmd == '\n' || *cmd == '#') // is a blank command
       continue;
     if(cmd[0] == 'c' && cmd[1] == 'd' && cmd[2] == ' '){
       // Chdir must be called by the parent, not the child.

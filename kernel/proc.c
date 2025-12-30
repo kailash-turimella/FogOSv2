@@ -125,6 +125,12 @@ found:
   p->pid = allocpid();
   p->state = USED;
 
+  p->nice = 1;
+  p->priority = 3 - p->nice; 
+
+  p->mmap = 0;
+  p->mmap_pages = 0;
+
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
     freeproc(p);
@@ -158,8 +164,15 @@ freeproc(struct proc *p)
   if(p->trapframe)
     kfree((void*)p->trapframe);
   p->trapframe = 0;
-  if(p->pagetable)
-    proc_freepagetable(p->pagetable, p->sz);
+  if (p->pagetable) {
+  	if (p->mmap_pages > 0) {
+  		uvmunmap(p->pagetable, p->mmap, p->mmap_pages, 1);
+  		p->mmap_pages = 0;
+  		p->mmap = 0;
+  	}
+  	proc_freepagetable(p->pagetable, p->sz);
+  }
+    
   p->pagetable = 0;
   p->sz = 0;
   p->pid = 0;
@@ -168,6 +181,7 @@ freeproc(struct proc *p)
   p->chan = 0;
   p->killed = 0;
   p->xstate = 0;
+  p->tracing = 0;
   p->state = UNUSED;
 }
 
@@ -279,6 +293,25 @@ kfork(void)
   // Cause fork to return 0 in the child.
   np->trapframe->a0 = 0;
 
+  np->mmap = p->mmap;
+  np->mmap_pages = p->mmap_pages;
+
+  for (i = 0; i < p->mmap_pages; i++) {
+  	uint64 va = p->mmap + (uint64)i * PGSIZE;
+
+  	uint64 pa = walkaddr(p->pagetable, va);
+  	if (pa == 0)
+  		panic("kfork: mmap walkaddr failed");
+
+
+  	if(mappages(np->pagetable, va, PGSIZE, pa,
+  				PTE_R | PTE_W | PTE_U) < 0)
+  	   panic("kfrok: mmap mappages failed");
+
+
+  	incref(pa);
+  }
+
   // increment reference counts on open file descriptors.
   for(i = 0; i < NOFILE; i++)
     if(p->ofile[i])
@@ -287,6 +320,9 @@ kfork(void)
 
   safestrcpy(np->name, p->name, sizeof(p->name));
 
+  np->nice = p->nice; // copy parent's nicenessœ
+  np->priority = p->priority;
+  
   pid = np->pid;
 
   release(&np->lock);
@@ -411,6 +447,64 @@ kwait(uint64 addr)
   }
 }
 
+// Wait for a child process to exit and return its pid.
+// Return -1 if this process has no children.
+int
+kwait2(uint64 addr, uint64 addr2)
+{
+  struct proc *pp;
+  int havekids, pid;
+  struct proc *p = myproc();
+
+  acquire(&wait_lock);
+
+  for(;;){
+    // Scan through table looking for exited children.
+    havekids = 0;
+    for(pp = proc; pp < &proc[NPROC]; pp++){
+      if(pp->parent == p){
+        // make sure the child isn't still in exit() or swtch().
+        acquire(&pp->lock);
+
+        havekids = 1;
+        if(pp->state == ZOMBIE){
+          // Found one.
+          pid = pp->pid;
+          if(addr != 0 && copyout(p->pagetable, addr, (char *)&pp->xstate,
+                                  sizeof(pp->xstate)) < 0) {
+            release(&pp->lock);
+            release(&wait_lock);
+            return -1;
+          }
+
+		  // copy syscall count to user
+		  if(addr2 != 0 && copyout(p->pagetable, addr2, (char *)&pp->counter,
+		                                    sizeof(pp->counter)) < 0) {
+		              release(&pp->lock);
+		              release(&wait_lock);
+		              return -1;
+		            }
+          
+          freeproc(pp);
+          release(&pp->lock);
+          release(&wait_lock);
+          return pid;
+        }
+        release(&pp->lock);
+      }
+    }
+
+    // No point waiting if we don't have any children.
+    if(!havekids || killed(p)){
+      release(&wait_lock);
+      return -1;
+    }
+    
+    // Wait for a child to exit.
+    sleep(p, &wait_lock);  //DOC: wait-sleep
+  }
+}
+
 // Per-CPU process scheduler.
 // Each CPU calls scheduler() after setting itself up.
 // Scheduler never returns.  It loops, doing:
@@ -426,39 +520,64 @@ scheduler(void)
 
   c->proc = 0;
   for(;;){
-    // The most recent process to run may have had interrupts
-    // turned off; enable them to avoid a deadlock if all
-    // processes are waiting. Then turn them back off
-    // to avoid a possible race between an interrupt
-    // and wfi.
-    intr_on();
-    intr_off();
+  // The most recent process to run may have had interrupts
+  // turned off; enable them to avoid a deadlock if all
+  // processes are waiting. Then turn them back off
+  // to avoid a possible race between an interrupt
+  // and wfi.
+  intr_on();
+  intr_off();
 
-    int found = 0;
-    for(p = proc; p < &proc[NPROC]; p++) {
-      acquire(&p->lock);
-      if(p->state == RUNNABLE) {
-        // Switch to chosen process.  It is the process's job
-        // to release its lock and then reacquire it
-        // before jumping back to us.
-        p->state = RUNNING;
-        c->proc = p;
-        swtch(&c->context, &p->context);
+  int found = 0;
 
-        // Process is done running for now.
-        // It should have changed its p->state before coming back.
-        c->proc = 0;
-        found = 1;
+  // Find the highest priority among RUNNABLE processes
+  // so we can start scanning from there
+  int max_priority = -1;
+  for(p = proc; p < &proc[NPROC]; p++){
+    acquire(&p->lock);
+    if(p->state == RUNNABLE && p->priority > max_priority)
+      max_priority = p->priority;
+    release(&p->lock);
+  }
+
+  // Iterate priority "levels" from highest we observed down to 0.
+  // At each level, run any RUNNABLE process whose priority is >= level.
+  if(max_priority >= 0){
+    for(int level = max_priority; level >= 0; level--){
+      int found_runnable = 0;
+
+      for(p = proc; p < &proc[NPROC]; p++){
+        acquire(&p->lock);
+        if(p->state == RUNNABLE && p->priority >= level){
+          found_runnable = 1;
+
+          // Switch to chosen process. It is the process's job
+          // to release its lock and then reacquire it
+          // before jumping back to us.
+          p->state = RUNNING;
+          c->proc = p;
+          swtch(&c->context, &p->context);
+
+          // Process is done running for now.
+          // It should have changed its p->state before coming back.
+          c->proc = 0;
+          found = 1;
+        }
+        release(&p->lock);
       }
-      release(&p->lock);
-    }
-    if(found == 0) {
-      // nothing to run; stop running on this core until an interrupt.
-      asm volatile("wfi");
+
+      // If no process qualified at this level, just drop to the next one.
+      if(!found_runnable)
+        continue;
     }
   }
-}
 
+  if(found == 0){
+    // nothing to run; stop running on this core until an interrupt.
+    asm volatile("wfi");
+  }
+ }
+} 
 // Switch to scheduler.  Must hold only p->lock
 // and have changed proc->state. Saves and restores
 // intena because intena is a property of this
@@ -681,7 +800,7 @@ procdump(void)
       state = states[p->state];
     else
       state = "???";
-    printf("%d %s %s", p->pid, state, p->name);
+    printf("%d %s %s priority=%d nice=%d\n", p->pid, state, p->name, p->priority, p->nice);
     printf("\n");
   }
 }

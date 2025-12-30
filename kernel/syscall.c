@@ -6,6 +6,7 @@
 #include "proc.h"
 #include "syscall.h"
 #include "defs.h"
+#include "strace.h"
 
 // Fetch the uint64 at addr from the current process.
 int
@@ -101,6 +102,15 @@ extern uint64 sys_unlink(void);
 extern uint64 sys_link(void);
 extern uint64 sys_mkdir(void);
 extern uint64 sys_close(void);
+extern uint64 sys_shutdown(void);
+extern uint64 sys_reboot(void);
+extern uint64 sys_clock(void);
+extern uint64 sys_strace_on(void);
+extern uint64 sys_wait2(void);
+extern uint64 sys_nice(void);
+extern uint64 sys_getcwd(void);
+extern uint64 sys_freemem(void);
+extern uint64 sys_mmap(void);
 
 // An array mapping syscall numbers from syscall.h
 // to the function that handles the system call.
@@ -126,6 +136,15 @@ static uint64 (*syscalls[])(void) = {
 [SYS_link]    sys_link,
 [SYS_mkdir]   sys_mkdir,
 [SYS_close]   sys_close,
+[SYS_shutdown]  sys_shutdown,
+[SYS_reboot] sys_reboot,
+[SYS_clock] sys_clock,
+[SYS_strace_on] sys_strace_on,
+[SYS_wait2] sys_wait2,
+[SYS_nice] sys_nice,
+[SYS_getcwd] sys_getcwd,
+[SYS_freemem] sys_freemem,
+[SYS_mmap] sys_mmap,
 };
 
 void
@@ -138,7 +157,14 @@ syscall(void)
   if(num > 0 && num < NELEM(syscalls) && syscalls[num]) {
     // Use num to lookup the system call function for num, call it,
     // and store its return value in p->trapframe->a0
-    p->trapframe->a0 = syscalls[num]();
+	p->counter++; // increase sys call counter 
+    
+    uint64 ptr = syscalls[num]();
+   
+    if (p->tracing) {
+    	strace(p, num, ptr);
+    }
+    p->trapframe->a0 = ptr;
   } else {
     printf("%d %s: unknown sys call %d\n",
             p->pid, p->name, num);

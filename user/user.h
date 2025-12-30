@@ -5,25 +5,34 @@ struct stat;
 // system calls
 int fork(void);
 int exit(int) __attribute__((noreturn));
-int wait(int*);
-int pipe(int*);
-int write(int, const void*, int);
-int read(int, void*, int);
-int close(int);
-int kill(int);
-int exec(const char*, char**);
-int open(const char*, int);
-int mknod(const char*, short, short);
-int unlink(const char*);
-int fstat(int fd, struct stat*);
-int link(const char*, const char*);
-int mkdir(const char*);
-int chdir(const char*);
-int dup(int);
+int wait(int *status);
+int pipe(int *pipefd);
+int write(int fd, const void *buf, int count);
+int read(int fd, void *buf, int count);
+int close(int fd);
+int kill(int pid);
+int exec(const char* path, char **argv);
+int open(const char* path, int mode);
+int mknod(const char* path, short major, short minor);
+int unlink(const char* path);
+int fstat(int fd, struct stat* st);
+int link(const char* old_path, const char* new_path);
+int mkdir(const char* path);
+int chdir(const char* path);
+int dup(int fd);
 int getpid(void);
-char* sys_sbrk(int,int);
+char* sys_sbrk(int n, int incr);
 int pause(int);
 int uptime(void);
+int shutdown(void);
+int reboot(void);
+int clock(void);
+int strace_on(void);
+int wait2(int *status, int *counter);
+int nice(int n);
+int getcwd(char *, int);
+int freemem(void);
+void* mmap(void);
 
 // ulib.c
 int stat(const char*, struct stat*);
@@ -39,6 +48,7 @@ int memcmp(const void *, const void *, uint);
 void *memcpy(void *, const void *, uint);
 char* sbrk(int);
 char* sbrklazy(int);
+int getline(char **buf, int sizep, int fd);
 
 // printf.c
 void fprintf(int, const char*, ...) __attribute__ ((format (printf, 2, 3)));
@@ -47,3 +57,8 @@ void printf(const char*, ...) __attribute__ ((format (printf, 1, 2)));
 // umalloc.c
 void* malloc(uint);
 void free(void*);
+void* calloc(uint, uint);
+void* realloc(void*, uint);
+void malloc_name(void *ptr, const char *name);
+void malloc_print(void);
+void malloc_setfsm(int);

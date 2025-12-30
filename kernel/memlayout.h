@@ -25,6 +25,12 @@
 #define VIRTIO0 0x10001000
 #define VIRTIO0_IRQ 1
 
+// goldfish_rtc clock
+#define GOLDFISH 0x101000
+
+// qemu "test" device for signaling exit/status
+#define VIRT_TEST 0x100000
+
 // qemu puts platform-level interrupt controller (PLIC) here.
 #define PLIC 0x0c000000L
 #define PLIC_PRIORITY (PLIC + 0x0)
