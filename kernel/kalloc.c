@@ -9,6 +9,16 @@
 #include "riscv.h"
 #include "defs.h"
 
+// Store a reference count for each physical page
+static int ref_count[(PHYSTOP - KERNBASE) / PGSIZE];
+
+// Convert physical address to index in reference count array
+static inline int
+pa2idx(uint64 pa)
+{
+	return (pa - KERNBASE) / PGSIZE;
+}
+
 void freerange(void *pa_start, void *pa_end);
 
 extern char end[]; // first address after kernel.
@@ -24,6 +34,15 @@ struct {
 } kmem;
 
 void
+incref(uint64 pa)
+{
+	int idx = pa2idx(pa);
+	acquire(&kmem.lock);
+	ref_count[idx]++;
+	release(&kmem.lock);
+}
+
+void
 kinit()
 {
   initlock(&kmem.lock, "kmem");
@@ -34,7 +53,7 @@ void
 freerange(void *pa_start, void *pa_end)
 {
   char *p;
-  p = (char*)PGROUNDUP((uint64)pa_start);
+  p = (char*)PGROUNDUP((uint64)pa_start);	
   for(; p + PGSIZE <= (char*)pa_end; p += PGSIZE)
     kfree(p);
 }
@@ -47,18 +66,35 @@ void
 kfree(void *pa)
 {
   struct run *r;
+  uint64 addr = (uint64)pa;
 
-  if(((uint64)pa % PGSIZE) != 0 || (char*)pa < end || (uint64)pa >= PHYSTOP)
+  if((addr % PGSIZE) != 0 || addr < (uint64)end || addr >= PHYSTOP)
     panic("kfree");
+
+  int idx = pa2idx(addr);
+
+  acquire(&kmem.lock);
+
+  if(ref_count[idx] < 0)
+    panic("kfree: ref_count underflow");
+
+  if(ref_count[idx] > 0){
+    // normal case: page was allocated by kalloc
+    ref_count[idx]--;
+    if(ref_count[idx] > 0){
+      // still in use somewhere else – don't free yet
+      release(&kmem.lock);
+      return;
+    }
+  }
 
   // Fill with junk to catch dangling refs.
   memset(pa, 1, PGSIZE);
 
   r = (struct run*)pa;
-
-  acquire(&kmem.lock);
   r->next = kmem.freelist;
   kmem.freelist = r;
+
   release(&kmem.lock);
 }
 
@@ -72,11 +108,31 @@ kalloc(void)
 
   acquire(&kmem.lock);
   r = kmem.freelist;
-  if(r)
+  if(r){
     kmem.freelist = r->next;
+    ref_count[pa2idx((uint64)r)] = 1;   // << MUST be inside lock
+  }
   release(&kmem.lock);
 
   if(r)
-    memset((char*)r, 5, PGSIZE); // fill with junk
+    memset((char*)r, 5, PGSIZE);
+
   return (void*)r;
+}	
+
+uint64
+kfreepages(void)
+{
+	uint64 num_pages = 0;
+	struct run *r;
+
+	acquire(&kmem.lock);
+	r = kmem.freelist;
+	while (r) {
+		num_pages++;
+		r = r->next;
+	}
+	release(&kmem.lock);
+
+	return num_pages;
 }
