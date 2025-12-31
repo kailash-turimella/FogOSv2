@@ -127,7 +127,6 @@ mkfs/mkfs: mkfs/mkfs.c $K/fs.h $K/param.h
 
 UPROGS=\
 	$U/_about\
-	$U/_barca\
 	$U/_benchmark\
 	$U/_broken\
 	$U/_cat\
@@ -158,6 +157,7 @@ UPROGS=\
 	$U/_rm\
 	$U/_reboot\
 	$U/_sh\
+	$U/_shell\
 	$U/_shutdown\
 	$U/_spinner\
 	$U/_strace\
@@ -171,8 +171,8 @@ UPROGS=\
 	$U/_forphan\
 	$U/_dorphan\
 
-fs.img: mkfs/mkfs README.md tm.txt input.txt $(UPROGS) script.sh spin1.sh spin2.sh 1.sh 2.sh 
-	mkfs/mkfs fs.img README.md tm.txt input.txt $(UPROGS) script.sh spin1.sh spin2.sh 1.sh 2.sh
+fs.img: mkfs/mkfs README.md tm.txt $(UPROGS) 1.sh 2.sh 3.sh 4.sh test.sh
+	mkfs/mkfs fs.img README.md tm.txt $(UPROGS) 1.sh 2.sh 3.sh 4.sh test.sh
 
 -include kernel/*.d user/*.d
 
